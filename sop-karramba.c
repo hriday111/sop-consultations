@@ -30,7 +30,10 @@ void usage(char* program_name)
 
 void don_work(shared_t *shared)
 {
+    
     ms_sleep(WAIT_N*100);
+    int fifo_fd=open(FIFO_NAME, O_RDONLY);
+    if(fifo_fd<0){ERR("open");}
     srand(time(NULL)^getpid());
     int x = rand()%shared->n;
     int y = rand()%shared->m;
@@ -38,6 +41,18 @@ void don_work(shared_t *shared)
     {
 
         pthread_mutex_lock(&shared->mutex);
+
+
+
+        char read_move;
+        pthread_mutex_unlock(&shared->mutex);
+        int size_read=read(fifo_fd, &read_move, sizeof(read_move));
+
+        pthread_mutex_lock(&shared->mutex);
+        if(size_read<0){ERR("READ!!");}
+        else if(size_read>0){ 
+            printf("Direction %c? Don't try these tricks on me, carramba!\n", read_move);
+        }
         if(!has_trail(shared->board, x, y, shared->n, shared->m)) {
             
         set_char(shared->board, x, y, shared->n, shared->m, KARRAMBA_CHAR);
@@ -54,12 +69,15 @@ void don_work(shared_t *shared)
         pthread_mutex_unlock(&shared->mutex);
         ms_sleep(100);
     }
-
+    close(fifo_fd);
     munmap(shared->board, shared->m*(shared->n+1));
     munmap(shared, sizeof(shared_t));
 }
 void do_expedition(shared_t *shared)
 {
+    unlink(FIFO_NAME);
+    if(mkfifo(FIFO_NAME, 0666)<0){ERR("mkfifi");}
+    
     pid_t pid = fork();
     if(pid<0) {ERR("fork");}
     if(pid==0)
@@ -70,9 +88,9 @@ void do_expedition(shared_t *shared)
 
     else{
 
-        int fifo_fd = mkfifo(FIFO_NAME, 0666);
-
-        srand(time(NULL));
+        int fifo_fd = open(FIFO_NAME, O_WRONLY);
+        if(fifo_fd<0){ERR("open");}
+        srand(time(NULL)^getpid());
         int x = rand()%shared->n;
         int y = rand()%shared->m;
         for(int s=0; s<STEP_COUNT; s++)
@@ -81,12 +99,17 @@ void do_expedition(shared_t *shared)
             set_char(shared->board, x, y, shared->n, shared->m, TRAIL_CHAR);
             char move = get_random_move(shared->board, x, y, shared->n, shared->m);
             move_pos(shared->board, move, shared->n, shared->m, &x, &y);
-
             char fifo_send_move = get_random_move(shared->board, x, y, shared->n, shared->m);
+
+            pthread_mutex_unlock(&shared->mutex);   
+            write(fifo_fd, &fifo_send_move, sizeof(fifo_send_move));
+
+            pthread_mutex_lock(&shared->mutex);
             set_char(shared->board, x, y, shared->n, shared->m, EXPEDITION_CHAR);
             pthread_mutex_unlock(&shared->mutex);
             ms_sleep(100);
         }
+        close(fifo_fd);
     }
 }
 int main(int argc, char** argv) {
